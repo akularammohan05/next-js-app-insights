@@ -1,5 +1,6 @@
 import { Suspense } from "react";
-import Dashboard from "@/components/Dashboard";
+//import Dashboard from "@/components/Dashboard";
+import Dashboard from '../components/Dashboard';
 
 export const dynamic = "force-dynamic";
 
