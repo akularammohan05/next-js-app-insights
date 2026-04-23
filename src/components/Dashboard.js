@@ -1,335 +1,327 @@
 ﻿"use client";
 
-import { useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
-    Squares2X2Icon,
-    CubeIcon,
-    ServerIcon,
-    BuildingOffice2Icon
+    CheckCircleIcon,
+    XCircleIcon,
+    ChevronDownIcon,
+    ChevronUpIcon,
 } from "@heroicons/react/24/solid";
 
-// =====================
-// DATA
-// =====================
-const data = {
-    tables: [
-        {
-            name: "PrimaryResult",
-            columns: [
-                { name: "statusApim" },
-                { name: "statusFnapp1" },
-                { name: "statusFnapp2" },
-                { name: "statusD365FO" },
-                { name: "timestamp" },
-                { name: "custom_d365fo_id" },
-                { name: "custom_request_id" },
-                { name: "custom_route" },
-                { name: "custom_sub_type" },
-                { name: "custom_type" },
-                { name: "error" }
-            ],
-            rows: [
-                [
-                    "True", "True", "True", "True",
-                    "2026-02-10T13:00:02.2198103Z",
-                    "0587387a",
-                    "0587387a",
-                    "",
-                    "ERP_CATEGORY_MASTER",
-                    "ERP_CATEGORY_MASTER",
-                    ""
-                ],
-                [
-                    "False", "True", "True", "True",
-                    "2026-02-05T13:00:04.6814863Z",
-                    "0587387a",
-                    "0587387a",
-                    "category",
-                    "ERP_CATEGORY_MASTER",
-                    "ERP_CATEGORY_MASTER",
-                    "APIM failed"
-                ],
-                [
-                    "True", "True", "True", "True",
-                    "2026-02-15T13:00:02.2198103Z",
-                    "0587387a",
-                    "0587387a",
-                    "",
-                    "ERP_CATEGORY_MASTER",
-                    "ERP_CATEGORY_MASTER",
-                    ""
-                ]
-            ]
-        }
-    ]
-};
-
-// =====================
-// ICON MAP
-// =====================
-const icons = {
-    APIM: Squares2X2Icon,
-    "Function App 1": CubeIcon,
-    "Function App 2": ServerIcon,
-    D365FO: BuildingOffice2Icon
-};
-
-// =====================
-// BADGE
-// =====================
-const Badge = ({ ok }) => (
-    <span className={`flex items-center gap-2 text-sm ${ok ? "text-green-600" : "text-red-600"}`}>
-        <span className={`w-5 h-5 rounded-full flex items-center justify-center ${ok ? "bg-green-600" : "bg-red-600"} text-white text-xs`}>
-            {ok ? "✔" : "✖"}
-        </span>
-        {ok ? "Success" : "Failed"}
-    </span>
-);
-
-// =====================
-// MAIN
-// =====================
 export default function Dashboard() {
-
-    // ✅ Dynamic query param support
-    const searchParams = useSearchParams();
-    const d365foIdFromUrl = searchParams.get("d365fo-id");
-
-    const table = data.tables[0];
-
-    // =====================
-    // DATE FILTER
-    // =====================
-    const [timeRange, setTimeRange] = useState("15d");
+    const [data, setData] = useState([]);
+    const [loading, setLoading] = useState(false);
     const [timezone, setTimezone] = useState("IST");
-    const [showCustom, setShowCustom] = useState(false);
+    const [expanded, setExpanded] = useState({});
+    const [showFailedOnly, setShowFailedOnly] = useState(false);
+    const [errorMessage, setErrorMessage] = useState("");
 
-    const today = new Date();
+    const getParams = () => {
+        const params = new URLSearchParams(window.location.search);
+        const all = Object.fromEntries(params.entries());
 
-    const getStartDate = (range) => {
-        const d = new Date();
-        if (range === "7d") d.setDate(d.getDate() - 7);
-        if (range === "15d") d.setDate(d.getDate() - 15);
-        if (range === "30d") d.setDate(d.getDate() - 30);
-        return d;
+        return {
+            d365foId: all.d365foId || all.d365foid || "",
+            route: all.route || "",
+            bucket: all.bucket || "",
+        };
     };
 
-    const [startDate, setStartDate] = useState(getStartDate("15d"));
-    const [endDate, setEndDate] = useState(today);
+    useEffect(() => {
+        const { d365foId, route, bucket } = getParams();
 
-    const handleRangeChange = (value) => {
-        setTimeRange(value);
-
-        if (value === "custom") {
-            setShowCustom(true);
-        } else {
-            setShowCustom(false);
-            setStartDate(getStartDate(value));
-            setEndDate(new Date());
+        if (!d365foId || (!route && !bucket)) {
+            setErrorMessage("D365FO ID or Route is missing");
+            return;
         }
+
+        const fetchData = async () => {
+            setLoading(true);
+            setErrorMessage("");
+
+            try {
+                const url = bucket
+                    ? `/api/appinsights?d365foId=${d365foId}&bucket=${bucket}`
+                    : `/api/appinsights?d365foId=${d365foId}&route=${route}`;
+
+                const res = await fetch(url);
+                const json = await res.json();
+
+                let rows = [];
+
+                if (json?.tables) {
+                    const table = json.tables[0];
+
+                    if (table && table.rows.length) {
+                        const cols = table.columns.map((c) => c.name);
+
+                        rows = table.rows.map((r, index) => {
+                            const obj = {};
+                            cols.forEach((c, i) => (obj[c] = r[i]));
+                            return { ...obj, id: index };
+                        });
+                    }
+                } else if (json?.results) {
+                    rows = json.results.map((r, index) => ({
+                        timestamp: r[0],
+                        operation_Id: r[1],
+                        custom_d365fo_id: r[2],
+                        custom_request_id: r[3],
+                        custom_route: r[4],
+                        custom_type: r[5],
+                        custom_sub_type: r[6],
+                        final_status: r[7],
+                        apim_status: r[8],
+                        status: r[9],
+                        status_source: r[10],
+                        exception_message: r[11],
+                        log: r[12],
+                        executed_route: r[13],
+                        id: index,
+                    }));
+                }
+
+                if (!rows || rows.length === 0) {
+                    setErrorMessage("No Data Found");
+                    setData([]);
+                    return;
+                }
+
+                const mappedRows = rows.map((obj, index) => {
+                    if (obj.final_status === "Correlation Not Found") {
+                        return {
+                            ...obj,
+                            id: index,
+                            overallStatus: false,
+                            statusApim: false,
+                            statusFn1: false,
+                            statusFn2: false,
+                            statusMain: false,
+                            statusSource: "unknown",
+                            error: "No logs found",
+                        };
+                    }
+
+                    const apimStatus = obj.apim_status === true;
+                    const mainStatus = obj.status === true;
+                    const source = obj.status_source;
+                    const overallStatus = obj.final_status === "Success";
+
+                    return {
+                        ...obj,
+                        id: index,
+                        statusApim: apimStatus,
+                        statusFn1: apimStatus,
+                        statusFn2: mainStatus,
+                        statusMain: mainStatus,
+                        statusSource: source,
+                        overallStatus,
+                        error: obj.exception_message || "",
+                    };
+                });
+
+                setData(mappedRows);
+            } catch (err) {
+                console.error("Fetch error:", err);
+                setErrorMessage("Something went wrong");
+                setData([]);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchData();
+    }, []);
+
+    const toggleExpand = (id) => {
+        setExpanded((prev) => ({
+            ...prev,
+            [id]: !prev[id],
+        }));
     };
 
-    // =====================
-    // FORMAT DATE
-    // =====================
-    const formatDate = (date) => {
-        if (!date) return "-";
+    const formatDate = (utcDate) => {
+        const date = new Date(utcDate);
 
-        if (timezone === "IST") {
-            return new Date(date).toLocaleString("en-IN", {
-                timeZone: "Asia/Kolkata"
+        return timezone === "IST"
+            ? date.toLocaleString("en-IN", {
+                timeZone: "Asia/Kolkata",
+                hour12: true,
+            })
+            : date.toLocaleString("en-US", {
+                timeZone: "UTC",
+                hour12: true,
             });
-        }
-
-        return new Date(date).toUTCString();
     };
 
-    // =====================
-    // MAP DATA
-    // =====================
-    const cols = table.columns.map(c => c.name);
-
-    const rows = table.rows.map(r => {
-        const obj = {};
-        cols.forEach((c, i) => (obj[c] = r[i]));
-        return obj;
-    });
-
-    // =====================
-    // FILTER DATA
-    // =====================
-    const filteredRows = rows.filter(r => {
-        const ts = new Date(r.timestamp);
-        return ts >= startDate && ts <= endDate;
-    });
-
-    const [open, setOpen] = useState(0);
-    const [selected, setSelected] = useState(0);
-
-    const current = filteredRows[selected] || filteredRows[0];
-
-    const overall = filteredRows.every(r =>
-        r.statusApim === "True" &&
-        r.statusFnapp1 === "True" &&
-        r.statusFnapp2 === "True" &&
-        r.statusD365FO === "True"
+    const StatusBadge = ({ status }) => (
+        <span
+            className={`flex items-center gap-1 text-sm font-semibold ${status ? "text-green-600" : "text-red-600"
+                }`}
+        >
+            {status ? (
+                <CheckCircleIcon className="w-5 h-5" />
+            ) : (
+                <XCircleIcon className="w-5 h-5" />
+            )}
+            {status ? "Success" : "Failed"}
+        </span>
     );
 
-    const components = [
-        { key: "statusApim", label: "APIM" },
-        { key: "statusFnapp1", label: "Function App 1" },
-        { key: "statusFnapp2", label: "Function App 2" },
-        { key: "statusD365FO", label: "D365FO" }
-    ];
-
-    return (
-        <div className="min-h-screen bg-gray-100 p-6">
-
-            <div className="max-w-[1600px] mx-auto bg-white rounded-lg shadow-sm border">
-
-                <div className="bg-gray-50 p-6 border-b">
-
-                    <h1 className="text-xl font-semibold text-gray-800 mb-4">
-                        Integration Execution Monitor
-                    </h1>
-
-                    <div className="flex flex-wrap gap-6 mb-4 items-center">
-
-                        <div className="flex items-center gap-2">
-                            <label className="text-sm text-gray-600">Time Range</label>
-
-                            <select
-                                value={timeRange}
-                                onChange={(e) => handleRangeChange(e.target.value)}
-                                className="border px-3 py-1 rounded text-sm"
-                            >
-                                <option value="7d">Last 7 Days</option>
-                                <option value="15d">Last 15 Days</option>
-                                <option value="30d">Last 30 Days</option>
-                                <option value="custom">Custom</option>
-                            </select>
-                        </div>
-
-                        {showCustom && (
-                            <div className="flex items-center gap-2">
-                                <input
-                                    type="date"
-                                    value={startDate.toISOString().slice(0, 10)}
-                                    onChange={(e) => setStartDate(new Date(e.target.value))}
-                                    className="border px-2 py-1 rounded text-sm"
-                                />
-                                <span>-</span>
-                                <input
-                                    type="date"
-                                    value={endDate.toISOString().slice(0, 10)}
-                                    onChange={(e) => setEndDate(new Date(e.target.value))}
-                                    className="border px-2 py-1 rounded text-sm"
-                                />
-                            </div>
-                        )}
-
-                        <div className="flex items-center gap-2">
-                            <span className="text-sm text-gray-600">Timezone</span>
-
-                            <button onClick={() => setTimezone("IST")}
-                                className={`px-3 py-1 rounded text-sm ${timezone === "IST" ? "bg-blue-600 text-white" : "bg-white border"}`}>
-                                IST
-                            </button>
-
-                            <button onClick={() => setTimezone("GMT")}
-                                className={`px-3 py-1 rounded text-sm ${timezone === "GMT" ? "bg-blue-600 text-white" : "bg-white border"}`}>
-                                GMT
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="flex justify-between items-center">
-
-                        <div className="text-sm text-gray-700 space-y-1">
-                            <p><b>Correlation ID:</b> {current?.custom_request_id}</p>
-                            <p><b>D365FO ID:</b> {d365foIdFromUrl || current?.custom_d365fo_id}</p>
-                            <p><b>Message Type:</b> {current?.custom_type}</p>
-                        </div>
-
-                        <div className="flex items-center gap-2 font-medium">
-                            <span className={`w-6 h-6 flex items-center justify-center rounded-full ${overall ? "bg-green-600" : "bg-red-600"} text-white`}>
-                                {overall ? "✔" : "✖"}
-                            </span>
-                            <span className={overall ? "text-green-600" : "text-red-600"}>
-                                {overall ? "Success" : "Failed"}
-                            </span>
-                        </div>
-
-                    </div>
-
-                </div>
-
-                <div className="p-4">
-
-                    {filteredRows.map((r, i) => (
-
-                        <div key={i} className="mb-4 border rounded-lg shadow-sm">
-
-                            <div
-                                onClick={() => {
-                                    setOpen(open === i ? -1 : i);
-                                    setSelected(i);
-                                }}
-                                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 flex justify-between cursor-pointer"
-                            >
-                                <span>
-                                    {open === i ? "▼" : "▶"} Execution {i + 1} | {formatDate(r.timestamp)}
-                                </span>
-
-                                <button className="bg-white text-blue-600 px-2 rounded text-sm">
-                                    {open === i ? "Hide" : "Show"}
-                                </button>
-                            </div>
-
-                            {open === i && (
-                                <div className="p-4 bg-gray-50">
-
-                                    <table className="w-full text-sm border">
-                                        <thead className="bg-gray-100">
-                                            <tr>
-                                                <th className="p-2 text-left">Component</th>
-                                                <th>Status</th>
-                                                <th>Error</th>
-                                            </tr>
-                                        </thead>
-
-                                        <tbody>
-                                            {components.map((item) => {
-                                                const Icon = icons[item.label];
-                                                const ok = r[item.key] === "True";
-
-                                                return (
-                                                    <tr key={item.label} className="border-t">
-                                                        <td className="p-2 flex items-center gap-2">
-                                                            <Icon className="w-4 h-4 text-blue-600" />
-                                                            {item.label}
-                                                        </td>
-
-                                                        <td><Badge ok={ok} /></td>
-                                                        <td>{ok ? "-" : r.error}</td>
-                                                    </tr>
-                                                );
-                                            })}
-                                        </tbody>
-                                    </table>
-
-                                </div>
-                            )}
-
-                        </div>
-
-                    ))}
-
-                </div>
-
+    const StatusList = ({ item }) => (
+        <div className="border p-4 mt-2 rounded bg-gray-50">
+            <div className="flex justify-between py-2 border-b">
+                <span>APIM</span>
+                <StatusBadge status={item.statusApim} />
             </div>
 
+            <div className="flex justify-between py-2 border-b">
+                <span>Function App 1</span>
+                <StatusBadge status={item.statusFn1} />
+            </div>
+
+            <div className="flex justify-between py-2 border-b">
+                <span>Function App 2</span>
+                <StatusBadge status={item.statusFn2} />
+            </div>
+
+            <div className="flex justify-between py-2">
+                <span>
+                    {item.statusSource === "client"
+                        ? "Client System"
+                        : "D365FO"}
+                </span>
+                <StatusBadge status={item.statusMain} />
+            </div>
+        </div>
+    );
+
+    if (loading) {
+        return (
+            <div className="p-6 text-center">
+                <div className="text-lg font-semibold">Checking logs...</div>
+                <div className="text-gray-500 text-sm mt-2">
+                    Please wait a few seconds
+                </div>
+            </div>
+        );
+    }
+
+    if (!data.length) {
+        return (
+            <div className="p-6 text-center">
+                <div className="text-xl font-semibold text-red-600">
+                    {errorMessage || "No Data Found"}
+                </div>
+            </div>
+        );
+    }
+
+    const filteredData = showFailedOnly
+        ? data.filter((d) => !d.overallStatus)
+        : data;
+
+    const first = data[0];
+
+    return (
+        <div className="p-6 bg-gray-100 min-h-screen">
+            <div className="bg-white rounded-lg shadow p-6">
+                <h2 className="text-xl font-bold mb-4">
+                    Integration Execution Monitor
+                </h2>
+
+                <div className="flex justify-between mb-6">
+                    <div>
+                        <span className="mr-2 font-medium">Timezone</span>
+
+                        <button
+                            className={`px-3 py-1 ${timezone === "IST"
+                                    ? "bg-blue-600 text-white"
+                                    : "bg-gray-200"
+                                }`}
+                            onClick={() => setTimezone("IST")}
+                        >
+                            IST
+                        </button>
+
+                        <button
+                            className={`px-3 py-1 ${timezone === "GMT"
+                                    ? "bg-blue-600 text-white"
+                                    : "bg-gray-200"
+                                }`}
+                            onClick={() => setTimezone("GMT")}
+                        >
+                            GMT
+                        </button>
+                    </div>
+
+                    <button
+                        onClick={() => setShowFailedOnly(!showFailedOnly)}
+                        className="px-3 py-1 bg-red-500 text-white rounded"
+                    >
+                        {showFailedOnly ? "Show All" : "Show Failed Only"}
+                    </button>
+                </div>
+
+                <div className="mb-4">
+                    <p><b>D365FO ID:</b> {first.custom_d365fo_id}</p>
+                </div>
+
+                <div className="mb-4">
+                    <StatusBadge status={first.overallStatus} />
+                </div>
+
+                {filteredData.map((item, index) => (
+                    <div key={item.id} className="mb-6">
+
+                        {/* ✅ FIXED RIBBON */}
+                        <div
+                            className="flex justify-between items-center bg-blue-600 text-white p-3 rounded cursor-pointer"
+                            onClick={() => toggleExpand(item.id)}
+                        >
+                            <div className="flex flex-col">
+                                <span>
+                                    Execution {index + 1} | {formatDate(item.timestamp)}
+                                </span>
+
+                                <span className="text-xs opacity-90">
+                                    {item.custom_type} | {item.custom_sub_type}
+                                </span>
+                            </div>
+
+                            <div className="flex items-center gap-4">
+                                <StatusBadge status={item.overallStatus} />
+
+                                {expanded[item.id] ? (
+                                    <ChevronUpIcon className="w-5 h-5" />
+                                ) : (
+                                    <ChevronDownIcon className="w-5 h-5" />
+                                )}
+                            </div>
+                        </div>
+
+                        {expanded[item.id] && (
+                            <div className="p-4">
+                                <div className="text-sm space-y-1 mb-2">
+                                    <p><b>Correlation ID:</b> {item.custom_request_id}</p>
+                                    <p><b>Route:</b> {item.custom_route || "-"}</p>
+                                    <p><b>Executed Route:</b> {item.executed_route || "-"}</p>
+                                    <p><b>Type:</b> {item.custom_type}</p>
+                                    <p><b>Sub Type:</b> {item.custom_sub_type}</p>
+                                </div>
+
+                                <StatusList item={item} />
+
+                                {item.error && (
+                                    <div className="mt-2 text-red-600 font-semibold">
+                                        {item.error}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                ))}
+            </div>
         </div>
     );
 }
